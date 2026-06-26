@@ -5,7 +5,8 @@
  * 本脚本只替换点击行为，不改原按钮的文字、尺寸、class、title、位置和外观。
  *
  * 打印预览：生成与导出同源的 PDF，并在浏览器 PDF 查看器中打开。
- * 打印 / 导出PDF：走同一套 PDF 生成路径，直接取得 PDF 文件。
+ * 打印：在隐藏 iframe 中渲染同一份排版文档，直接调起浏览器打印对话框。
+ * 导出PDF：用浏览器 PDF 引擎直接取得 PDF 文件。
  */
 (function () {
   "use strict";
@@ -14,7 +15,7 @@
   if (window.__sicnuExamPrint) return;
   window.__sicnuExamPrint = true;
 
-  var VERSION = "3.5.1";
+  var VERSION = "3.5.2";
   var BUTTON_RE = /打印|导出\s*PDF|下载|doprint/i;
 
   window.__sicnuExamPrintVersion = VERSION;
@@ -157,7 +158,7 @@
     if (!el) return;
 
     if (!document.documentElement.getAttribute("data-sicnu-bridge")) {
-      openWindow(el, previewMode ? false : true);
+      previewMode ? openWindow(el, false) : printInFrame(el);
       return;
     }
 
@@ -166,7 +167,7 @@
     var finished = false;
     var timer = setTimeout(function () {
       cleanup();
-      openWindow(el, previewMode ? false : true);
+      previewMode ? openWindow(el, false) : printInFrame(el);
     }, 45000);
 
     function cleanup() {
@@ -183,7 +184,7 @@
       var failed = e.detail.error || !r || !r.ok;
       cleanup();
       if (failed) {
-        openWindow(el, previewMode ? false : true);
+        previewMode ? openWindow(el, false) : printInFrame(el);
       }
     }
 
@@ -206,8 +207,13 @@
     requestPdf(true);
   }
 
-  function printOrDownload() {
+  function downloadPdf() {
     requestPdf(false);
+  }
+
+  function printPage() {
+    var el = printable();
+    if (el) printInFrame(el);
   }
 
   function openWindow(el, autoPrint) {
@@ -217,8 +223,67 @@
     win.document.close();
   }
 
+  function printInFrame(el) {
+    var iframe = document.createElement("iframe");
+    var cleanupTimer;
+
+    function cleanup() {
+      clearTimeout(cleanupTimer);
+      try { iframe.remove(); } catch (e) {}
+    }
+
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none";
+    document.body.appendChild(iframe);
+
+    var doc = iframe.contentDocument || iframe.contentWindow.document;
+    doc.open();
+    doc.write(docHtml(el, false));
+    doc.close();
+
+    waitForPrintFrame(iframe).then(function () {
+      var win = iframe.contentWindow;
+      win.onafterprint = cleanup;
+      win.focus();
+      win.print();
+      cleanupTimer = setTimeout(cleanup, 60000);
+    }).catch(function () {
+      cleanup();
+      openWindow(el, true);
+    });
+  }
+
+  function waitForPrintFrame(iframe) {
+    return new Promise(function (resolve) {
+      var win = iframe.contentWindow;
+      var doc = iframe.contentDocument || win.document;
+      function ready() {
+        var fontPromise = doc.fonts && doc.fonts.ready ? doc.fonts.ready.catch(function () {}) : Promise.resolve();
+        fontPromise.then(function () {
+          var images = Array.prototype.slice.call(doc.images || []);
+          return Promise.all(images.map(function (img) {
+            if (img.complete) return Promise.resolve();
+            if (img.decode) return img.decode().catch(function () {});
+            return new Promise(function (done) {
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+              setTimeout(done, 3000);
+            });
+          }));
+        }).then(function () { setTimeout(resolve, 80); });
+      }
+      if (doc.readyState === "complete") {
+        ready();
+      } else {
+        win.addEventListener("load", ready, { once: true });
+      }
+    });
+  }
+
   function actionFor(label) {
-    return /预览/.test(label) ? preview : printOrDownload;
+    if (/预览/.test(label)) return preview;
+    if (/导出|下载/.test(label)) return downloadPdf;
+    return printPage;
   }
 
   function intercept(e) {
@@ -230,7 +295,7 @@
 
   var lodop = new Proxy({}, {
     get: function (_target, key) {
-      if (key === "PRINT" || key === "PRINTA") return printOrDownload;
+      if (key === "PRINT" || key === "PRINTA") return printPage;
       if (key === "PREVIEW") return preview;
       return function () { return lodop; };
     }
@@ -239,7 +304,7 @@
   function takeover() {
     window.doprint = function (how) {
       how = String(how);
-      (how === "1" ? preview : printOrDownload)();
+      (how === "1" ? preview : how === "3" ? downloadPdf : printPage)();
       return false;
     };
     window.getLodop = window.getCLodop = function () { return lodop; };
