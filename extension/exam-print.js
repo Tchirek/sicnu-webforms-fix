@@ -19,6 +19,11 @@
   if (window.__sicnuExamPrint) return;
   window.__sicnuExamPrint = true;
 
+  // 诊断标记：把当前运行的版本盖在 <html data-sicnu-print> 上，方便确认热加载是否生效。
+  var VERSION = "3.4.3";
+  window.__sicnuExamPrintVersion = VERSION;
+  try { document.documentElement.setAttribute("data-sicnu-print", VERSION); } catch (e) {}
+
   var BUTTON_RE = /打印|导出\s*PDF|下载|doprint/i;
 
   // ---- 内容定位与排版判断 ----
@@ -68,27 +73,33 @@
     ).join("");
   }
 
-  // 打印文档结构（与旧版导出方法完全一致——经验证最忠实于原页）：A4 页、零页边距，
-  // 内容铺满纸张宽度(width:100% + 2% 内边距)，让浏览器用页面自己的样式表自然排版；
-  // 绝不锁宽度、不搬继承样式、不改媒体类型——任何“矫正”都只会让它偏离原页。
-  // 图层：水印 :before 垫底(z-index:0)，内容整套 .sicnu-print-content 抬到上层(z-index:1)。
-  function sheetCss(orientation, wm) {
-    return "@page{size:A4 " + orientation + ";margin:0}" +
-      "html,body{margin:0!important;padding:0!important;background:#fff!important;color:#000!important}" +
-      "body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}" +
-      ".sicnu-print-sheet{box-sizing:border-box;position:relative;width:100%;min-height:100vh;padding:2%;background:#fff;color:#000}" +
-      ".sicnu-print-content{position:relative;z-index:1}" +
-      "input,button,select,textarea,.btn_bg2{display:none!important}" +
-      "table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}" +
-      "td,th{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}" +
-      (wm ? ".sicnu-print-sheet:before{content:'';position:fixed;inset:0;background:url('" + wm + "') center center/72% auto no-repeat;z-index:0;pointer-events:none}" : "");
+  // 水印垫在 body::before（z-index:0），内容整体抬到上层。
+  // 另：页面给 #divContent 设了平铺的屏幕水印(background-image)，但原版 LODOP 打印用的是
+  // innerHTML（不含该背景），只额外叠一张【居中】水印。这里去掉平铺背景，只保留居中水印，
+  // 避免平铺水印满铺一片、与居中水印叠加。
+  function watermarkCss() {
+    var href = watermarkHref();
+    if (!href) return "";
+    return "#divContent{background-image:none!important}" +
+      ".sicnu-sheet::before{content:'';position:fixed;inset:0;z-index:0;" +
+      "background:url('" + href + "') center/72% no-repeat}";
   }
 
+  // 打印文档结构【与 v1 完全一致——这是用户实测最忠实于原页的版本】：
+  // 内容直接放进 <body>，只加 A4＋12mm 页边距，绝不用额外的包裹层 / width:100% / padding
+  // 去“矫正”排版——任何包裹都可能打断页面自己的选择器与表格宽度，反而降低还原度。
   function docHtml(el, autoPrint) {
     return '<!doctype html><html><head><meta charset="utf-8"><base href="' + location.href + '">' +
       "<title>" + (document.title || "考试信息") + "</title>" + styleTags() +
-      "<style>" + sheetCss(isLandscape(el) ? "landscape" : "portrait", watermarkHref()) + "</style></head>" +
-      '<body><div class="sicnu-print-sheet"><div class="sicnu-print-content">' + el.outerHTML + "</div></div>" +
+      "<style>" +
+        "@page{size:A4 " + (isLandscape(el) ? "landscape" : "portrait") + ";margin:12mm}" +
+        "html,body{margin:0;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+        ".sicnu-sheet>*{position:relative;z-index:1}" +
+        "input,button,select{display:none!important}" +
+        "tr{break-inside:avoid}" +
+        watermarkCss() +
+      "</style></head>" +
+      '<body class="sicnu-sheet">' + el.outerHTML +
       (autoPrint ? "<script>onload=function(){focus();print()};onafterprint=function(){close()}<\/script>" : "") +
       "</body></html>";
   }
@@ -156,8 +167,13 @@
     get: function (_t, k) { return k === "PRINT" ? print : k === "PREVIEW" ? preview : function () { return lodop; }; }
   });
 
+  // 页面用 doprint('1'|'2'|'3') 区分三个按钮：1=打印预览，2=打印，3=导出PDF。按此映射。
   function takeover() {
-    window.doprint = function (how) { (String(how) === "1" ? preview : print)(); return false; };
+    window.doprint = function (how) {
+      how = String(how);
+      (how === "1" ? preview : how === "3" ? download : print)();
+      return false;
+    };
     window.getLodop = window.getCLodop = function () { return lodop; };
     window.CLODOP = lodop;
     document.querySelectorAll("input[type=button],button,a").forEach(function (c) {
