@@ -10,16 +10,32 @@ document.documentElement.setAttribute("data-sicnu-bridge", "1");
 
 window.addEventListener("sicnu-pdf-request", function (event) {
   var detail = event.detail || {};
-  chrome.runtime.sendMessage(
-    { type: "sicnu-pdf", payload: detail.payload },
-    function (response) {
-      window.dispatchEvent(new CustomEvent("sicnu-pdf-response", {
-        detail: {
-          requestId: detail.requestId,
-          response: response || null,
-          error: chrome.runtime.lastError ? chrome.runtime.lastError.message : null
-        }
-      }));
-    }
-  );
+  var done = false;
+  var timer = setTimeout(function () {
+    reply(null, "后台 PDF 通道超时。");
+  }, 40000);
+
+  function reply(response, error) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    window.dispatchEvent(new CustomEvent("sicnu-pdf-response", {
+      detail: {
+        requestId: detail.requestId,
+        response: response || null,
+        error: error || null
+      }
+    }));
+  }
+
+  try {
+    chrome.runtime.sendMessage(
+      { type: "sicnu-pdf", payload: detail.payload },
+      function (response) {
+        reply(response, chrome.runtime.lastError ? chrome.runtime.lastError.message : null);
+      }
+    );
+  } catch (error) {
+    reply(null, error && error.message ? error.message : String(error));
+  }
 });

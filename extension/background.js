@@ -8,12 +8,12 @@
  *
  * 旧版用 data: URL 渲染，那是 opaque 源：跨源取站点资源会被拦截（Private Network
  * Access）或丢掉 SameSite Cookie，结果导出的 PDF 丢失全部样式与图片（“错谬甚多”）。
- * 这里改用 CDP Fetch 拦截：在隐藏窗口里导航到本站的一个占位 URL，把这次导航的响应
+ * 这里改用 CDP Fetch 拦截：在临时标签页里导航到本站的一个占位 URL，把这次导航的响应
  * 替换成我们的打印文档——文档因此“就是本站的页面”，其子资源全部同源带 Cookie 加载，
  * 渲染保真后再 printToPDF。预览、打印、导出因此共用同一个 PDF 生成入口。
  *
- * 渲染放在最小化、不聚焦的 popup 窗口里。printToPDF 用 preferCSSPageSize 跟随文档自带的
- * @page（A4＋方向），并等待字体、照片、水印图片稳定后再落 PDF。
+ * 渲染放在不激活的临时标签页里。printToPDF 用 preferCSSPageSize 跟随文档自带的 @page
+ * （A4＋方向），并等待字体、照片、水印图片稳定后再落 PDF。
  */
 
 var SENTINEL = "/__sicnu_print__"; // 占位导航路径；不在任何 content_scripts 匹配范围内，故不会被注入
@@ -30,15 +30,15 @@ async function exportPdf(payload) {
   if (!chrome.debugger) throw new Error("当前浏览器不支持 debugger 接口。");
   if (!payload || !payload.html || !payload.origin) throw new Error("导出请求缺少必要字段。");
 
-  var win = await createHiddenWindow("about:blank");
-  var debuggee = { tabId: win.tabId };
+  var tab = await createRenderTab("about:blank");
+  var debuggee = { tabId: tab.id };
   var renderUrl = payload.origin + SENTINEL + "?r=" + Date.now().toString(36) + Math.random().toString(36).slice(2);
   var htmlBase64 = toBase64Utf8(payload.html);
 
   // 把占位 URL 的导航响应替换成打印文档；其余子资源（样式表/图片/水印）一律放行——
   // 它们与文档同源，会带上会话 Cookie 正常加载。
   var onEvent = function (source, method, params) {
-    if (source.tabId !== win.tabId || method !== "Fetch.requestPaused") return;
+    if (source.tabId !== tab.id || method !== "Fetch.requestPaused") return;
     if (params.request.url.indexOf(SENTINEL) !== -1) {
       command(debuggee, "Fetch.fulfillRequest", {
         requestId: params.requestId,
@@ -58,7 +58,7 @@ async function exportPdf(payload) {
     await command(debuggee, "Runtime.enable", {});
     await command(debuggee, "Fetch.enable", { patterns: [{ urlPattern: "*" }] });
 
-    var loaded = onceEvent(win.tabId, "Page.loadEventFired");
+    var loaded = onceEvent(tab.id, "Page.loadEventFired");
     await command(debuggee, "Page.navigate", { url: renderUrl });
     await withTimeout(loaded, 20000, "渲染打印文档超时。");
 
@@ -66,24 +66,24 @@ async function exportPdf(payload) {
     await command(debuggee, "Emulation.setEmulatedMedia", { media: "print" });
     await waitForRenderStable(debuggee);
 
-    var pdf = await command(debuggee, "Page.printToPDF", {
+    var pdf = await withTimeout(command(debuggee, "Page.printToPDF", {
       landscape: payload.orientation === "landscape",
       printBackground: true,
       preferCSSPageSize: true,
       marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0,
       scale: 1
-    });
+    }), 30000, "浏览器生成 PDF 超时。");
     if (payload.preview) {
-      var previewTabId = await previewData("data:application/pdf;base64," + pdf.data);
+      var previewTabId = await withTimeout(previewData("data:application/pdf;base64," + pdf.data), 15000, "打开 PDF 预览超时。");
       return { previewTabId: previewTabId };
     }
-    var downloadId = await downloadData("data:application/pdf;base64," + pdf.data, payload.filename);
+    var downloadId = await withTimeout(downloadData("data:application/pdf;base64," + pdf.data, payload.filename), 15000, "保存 PDF 超时。");
     return { downloadId: downloadId };
   } finally {
     // 无论成败都收尾：摘掉事件监听、脱离调试器、关掉临时窗口，避免黄条与孤儿窗口残留。
     chrome.debugger.onEvent.removeListener(onEvent);
     try { await detach(debuggee); } catch (_) {}
-    try { await removeWindow(win.windowId); } catch (_) {}
+    try { await removeTab(tab.id); } catch (_) {}
   }
 }
 
@@ -138,20 +138,20 @@ async function waitForRenderStable(debuggee) {
   await sleep(250);
 }
 
-function createHiddenWindow(url) {
+function createRenderTab(url) {
   return new Promise(function (resolve, reject) {
-    chrome.windows.create({ url: url, type: "popup", focused: false, state: "minimized" }, function (w) {
-      if (chrome.runtime.lastError || !w || !w.tabs || !w.tabs.length) {
-        reject(new Error((chrome.runtime.lastError && chrome.runtime.lastError.message) || "无法创建打印窗口。"));
+    chrome.tabs.create({ url: url, active: false }, function (tab) {
+      if (chrome.runtime.lastError || !tab || !tab.id) {
+        reject(new Error((chrome.runtime.lastError && chrome.runtime.lastError.message) || "无法创建打印标签页。"));
       } else {
-        resolve({ windowId: w.id, tabId: w.tabs[0].id });
+        resolve(tab);
       }
     });
   });
 }
 
-function removeWindow(windowId) {
-  return new Promise(function (resolve) { chrome.windows.remove(windowId, resolve); });
+function removeTab(tabId) {
+  return new Promise(function (resolve) { chrome.tabs.remove(tabId, resolve); });
 }
 
 function attach(debuggee) {
