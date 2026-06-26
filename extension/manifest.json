@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "川师教务顶栏与考试打印修复",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "修复四川师范大学教务系统顶栏无法切换，以及考试页面旧式 LODOP 打印按钮失效的问题。打印预览/打印/导出PDF 三种功能各司其职。",
   "permissions": [
     "debugger",

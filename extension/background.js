@@ -1,16 +1,23 @@
 /*
  * 川师教务 · 后台（service worker）
  *
- * 收到导出请求后，用浏览器自身的打印引擎（CDP Page.printToPDF）把考试内容渲染成 PDF 并下载。
+ * 收到导出请求后，把【与预览/打印完全相同】的那份打印文档渲染成 PDF 下载。
  *
- * 忠实复现：打印文档与 exam-print.js 的结构完全一致——A4 页、内容铺满纸张、加载页面自己的
- * 样式表，让浏览器自然排版。【不】锁宽度、【不】搬继承样式、【不】改媒体类型，这些“矫正”
- * 只会让结果偏离原页（已验证）。printToPDF 用默认打印媒体，与旧版导出方法一致。
+ * 关键：打印文档必须以【与教务页同源】的身份加载，它引用的样式表 / 图片 / 水印才能
+ * 正常取到——教务是 http 站点，资源多为同源、会话 Cookie 通常是 SameSite=Lax。
  *
- * 下载无感：临时打印页放在【最小化、不聚焦的 popup 窗口】里，不会在标签栏多出标签页；
- * 打印媒体下排版只取决于 @page 纸张尺寸，与窗口是否可见、是否最小化无关。用 data: URL
- * （非安全上下文，可直接加载内网 http 样式表/图片），等其 load 完成再打印，无需估时。
+ * 旧版用 data: URL 渲染，那是 opaque 源：跨源取站点资源会被拦截（Private Network
+ * Access）或丢掉 SameSite Cookie，结果导出的 PDF 丢失全部样式与图片（“错谬甚多”）。
+ * 这里改用 CDP Fetch 拦截：在隐藏窗口里导航到本站的一个占位 URL，把这次导航的响应
+ * 替换成我们的打印文档——文档因此“就是本站的页面”，其子资源全部同源带 Cookie 加载，
+ * 渲染保真后再 printToPDF。预览/打印（同源新窗口）一直是对的，导出现在与它们一致。
+ *
+ * 下载无感：渲染放在最小化、不聚焦的 popup 窗口里，打印媒体下排版只取决于 @page 纸张，
+ * 与窗口是否可见无关。printToPDF 用 preferCSSPageSize 跟随文档自带的 @page（A4＋方向）。
  */
+
+var SENTINEL = "/__sicnu_print__"; // 占位导航路径；不在任何 content_scripts 匹配范围内，故不会被注入
+
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
   if (!message || message.type !== "sicnu-pdf") return false;
   exportPdf(message.payload)
@@ -21,54 +28,74 @@ chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
 
 async function exportPdf(payload) {
   if (!chrome.debugger) throw new Error("当前浏览器不支持 debugger 接口。");
-  var html = buildDocument(payload);
-  var win = await createHiddenWindow("data:text/html;charset=utf-8," + encodeURIComponent(html));
+  if (!payload || !payload.html || !payload.origin) throw new Error("导出请求缺少必要字段。");
+
+  var win = await createHiddenWindow("about:blank");
   var debuggee = { tabId: win.tabId };
+  var renderUrl = payload.origin + SENTINEL + "?r=" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+  var htmlBase64 = toBase64Utf8(payload.html);
+
+  // 把占位 URL 的导航响应替换成打印文档；其余子资源（样式表/图片/水印）一律放行——
+  // 它们与文档同源，会带上会话 Cookie 正常加载。
+  var onEvent = function (source, method, params) {
+    if (source.tabId !== win.tabId || method !== "Fetch.requestPaused") return;
+    if (params.request.url.indexOf(SENTINEL) !== -1) {
+      command(debuggee, "Fetch.fulfillRequest", {
+        requestId: params.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "Content-Type", value: "text/html; charset=utf-8" }],
+        body: htmlBase64
+      }).catch(function () {});
+    } else {
+      command(debuggee, "Fetch.continueRequest", { requestId: params.requestId }).catch(function () {});
+    }
+  };
+
   try {
-    await tabComplete(win.tabId);
     await attach(debuggee);
+    chrome.debugger.onEvent.addListener(onEvent);
     await command(debuggee, "Page.enable", {});
+    await command(debuggee, "Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+
+    var loaded = onceEvent(win.tabId, "Page.loadEventFired");
+    await command(debuggee, "Page.navigate", { url: renderUrl });
+    await withTimeout(loaded, 20000, "渲染打印文档超时。");
+
+    await command(debuggee, "Fetch.disable", {});
     var pdf = await command(debuggee, "Page.printToPDF", {
-      landscape: payload.orientation === "landscape",
+      landscape: payload.orientation === "landscape", // preferCSSPageSize 命中时以文档 @page 为准，此项兜底
       printBackground: true,
       preferCSSPageSize: true,
       marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0,
       scale: 1
     });
-    await detach(debuggee);
-    await removeWindow(win.windowId);
     var downloadId = await downloadData("data:application/pdf;base64," + pdf.data, payload.filename);
     return { downloadId: downloadId };
-  } catch (error) {
-    // 失败时必须收尾：脱离调试器、关掉临时窗口，避免留下黄条和孤儿窗口。
+  } finally {
+    // 无论成败都收尾：摘掉事件监听、脱离调试器、关掉临时窗口，避免黄条与孤儿窗口残留。
+    chrome.debugger.onEvent.removeListener(onEvent);
     try { await detach(debuggee); } catch (_) {}
     try { await removeWindow(win.windowId); } catch (_) {}
-    throw error;
   }
 }
 
-function buildDocument(payload) {
-  var orientation = payload.orientation === "landscape" ? "landscape" : "portrait";
-  var links = (payload.stylesheetHrefs || []).map(function (href) {
-    return '<link rel="stylesheet" href="' + escapeAttr(href) + '">';
-  }).join("");
-  var styles = (payload.inlineStyles || []).map(function (css) { return "<style>" + css + "</style>"; }).join("");
-  var wm = payload.watermarkHref ? escapeCssUrl(payload.watermarkHref) : "";
-  // 与 exam-print.js 的 sheetCss 完全一致（旧版导出结构）。
-  return '<!doctype html><html><head><meta charset="utf-8"><base href="' + escapeAttr(payload.baseHref || "http://202.115.194.60/") + '">' +
-    "<title>" + escapeHtml(payload.title || "考试信息") + "</title>" + links + styles +
-    "<style>" +
-      "@page{size:A4 " + orientation + ";margin:0}" +
-      "html,body{margin:0!important;padding:0!important;background:#fff!important;color:#000!important}" +
-      "body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}" +
-      ".sicnu-print-sheet{box-sizing:border-box;position:relative;width:100%;min-height:100vh;padding:2%;background:#fff;color:#000}" +
-      ".sicnu-print-content{position:relative;z-index:1}" +
-      "input,button,select,textarea,.btn_bg2{display:none!important}" +
-      "table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}" +
-      "td,th{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}" +
-      (wm ? ".sicnu-print-sheet:before{content:'';position:fixed;inset:0;background:url('" + wm + "') center center/72% auto no-repeat;z-index:0;pointer-events:none}" : "") +
-    "</style></head>" +
-    '<body><div class="sicnu-print-sheet"><div class="sicnu-print-content">' + (payload.contentHtml || "") + "</div></div></body></html>";
+function onceEvent(tabId, method) {
+  return new Promise(function (resolve) {
+    function handler(source, evMethod) {
+      if (source.tabId === tabId && evMethod === method) {
+        chrome.debugger.onEvent.removeListener(handler);
+        resolve();
+      }
+    }
+    chrome.debugger.onEvent.addListener(handler);
+  });
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise(function (_resolve, reject) { setTimeout(function () { reject(new Error(message)); }, ms); })
+  ]);
 }
 
 function createHiddenWindow(url) {
@@ -85,24 +112,6 @@ function createHiddenWindow(url) {
 
 function removeWindow(windowId) {
   return new Promise(function (resolve) { chrome.windows.remove(windowId, resolve); });
-}
-
-function tabComplete(tabId) {
-  return new Promise(function (resolve) {
-    function listener(id, info) {
-      if (id === tabId && info.status === "complete") {
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.get(tabId, function (tab) {
-      if (tab && tab.status === "complete") {
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    });
-  });
 }
 
 function attach(debuggee) {
@@ -137,9 +146,13 @@ function sanitize(filename) {
   return String(filename || "川师教务考试信息.pdf").replace(/[\\/:*?"<>|]+/g, "-").trim().slice(0, 180);
 }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
+// service worker 里 btoa 不接受非 Latin1 字符，先按 UTF-8 编码再分块转 base64（避免长串触发栈溢出）。
+function toBase64Utf8(str) {
+  var bytes = new TextEncoder().encode(str);
+  var binary = "";
+  var CHUNK = 0x8000;
+  for (var i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
-
-function escapeAttr(value) { return escapeHtml(value).replace(/'/g, "&#39;"); }
-function escapeCssUrl(value) { return String(value).replace(/['"()\\\r\n]/g, ""); }

@@ -121,18 +121,16 @@
       if (e.detail.error || !r || !r.ok) openWindow(el, true); // 后台不可用则退回对话框
     }
     window.addEventListener("sicnu-pdf-response", onResponse);
+    // 后台拿到的就是预览/打印用的【同一份】文档（docHtml），由后台以同源身份加载并 printToPDF，
+    // 因此样式表/图片/水印都能带 Cookie 取到，导出与预览/打印逐像素一致。origin 用于拼占位 URL。
     window.dispatchEvent(new CustomEvent("sicnu-pdf-request", {
       detail: {
         requestId: requestId,
         payload: {
-          title: document.title || "考试信息",
+          html: docHtml(el, false),
           filename: fileName(el),
           orientation: isLandscape(el) ? "landscape" : "portrait",
-          baseHref: location.href,
-          watermarkHref: watermarkHref(),
-          contentHtml: el.outerHTML,
-          stylesheetHrefs: Array.prototype.map.call(document.querySelectorAll('link[rel~="stylesheet"]'), function (l) { return l.href; }).filter(Boolean),
-          inlineStyles: Array.prototype.map.call(document.querySelectorAll("style"), function (s) { return s.textContent || ""; })
+          origin: location.origin
         }
       }
     }));
