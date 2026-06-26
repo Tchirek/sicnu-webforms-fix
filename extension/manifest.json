@@ -1,55 +1,41 @@
 {
   "manifest_version": 3,
-  "name": "川师教务顶栏修复",
-  "version": "1.4.0",
-  "description": "修复四川师范大学教务系统顶栏无法切换，以及考试页面旧式打印/PDF按钮不可用的问题。",
+  "name": "川师教务顶栏与考试打印修复",
+  "version": "3.3.0",
+  "description": "修复四川师范大学教务系统顶栏无法切换，以及考试页面旧式 LODOP 打印按钮失效的问题。打印预览/打印/导出PDF 三种功能各司其职。",
   "permissions": [
     "debugger",
     "downloads"
-  ],
-  "host_permissions": [
-    "http://202.115.194.60/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": [
-        "http://202.115.194.60/Index.aspx*"
-      ],
-      "js": [
-        "injector.js"
-      ],
+      "matches": ["http://202.115.194.60/Index.aspx*"],
+      "js": ["webforms-patch.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://202.115.194.60/ExamManage/*"],
+      "js": ["bridge.js"],
       "run_at": "document_start",
       "all_frames": true
     },
     {
-      "matches": [
-        "http://202.115.194.60/ExamManage/*"
-      ],
-      "js": [
-        "exam-pdf-injector.js"
-      ],
+      "matches": ["http://202.115.194.60/ExamManage/*"],
+      "js": ["exam-print.js"],
       "run_at": "document_start",
-      "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "webforms-patch.js",
-        "exam-pdf-patch.js"
-      ],
-      "matches": [
-        "http://202.115.194.60/*"
-      ]
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "browser_specific_settings": {
     "gecko": {
       "id": "sicnu-webforms-fix@local",
-      "strict_min_version": "109.0"
+      "strict_min_version": "128.0"
     }
   }
 }

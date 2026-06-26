@@ -1,10 +1,17 @@
+/*
+ * 川师教务 · 顶栏切换修复
+ *
+ * 顶栏链接写成 javascript:__doPostBack(...)，但页面没有定义 __doPostBack，ASP.NET 菜单
+ * 依赖的若干 WebForm_* 函数也缺失，于是点击顶栏没有任何反应。这里补齐这些函数，让顶栏
+ * 能正常提交 PostBack 切换模块。所有补丁都带存在性判断，绝不覆盖页面已有的真实实现。
+ *
+ * 以 world:MAIN + document_start 运行，处在页面上下文。
+ */
 (function () {
-  var version = "1.0.0";
-  if (window.__sicnuWebFormsPatchVersion === version) {
-    return;
-  }
+  "use strict";
 
-  window.__sicnuWebFormsPatchVersion = version;
+  if (window.__sicnuWebForms) return;
+  window.__sicnuWebForms = true;
 
   if (!window.WebForm_GetElementById) {
     window.WebForm_GetElementById = function (id) {
@@ -27,10 +34,7 @@
 
   if (!window.WebForm_AppendToClassName) {
     window.WebForm_AppendToClassName = function (element, className) {
-      if (!element || !className) {
-        return;
-      }
-
+      if (!element || !className) return;
       var current = " " + (element.className || "") + " ";
       if (current.indexOf(" " + className + " ") < 0) {
         element.className = (element.className ? element.className + " " : "") + className;
@@ -40,10 +44,7 @@
 
   if (!window.WebForm_RemoveClassName) {
     window.WebForm_RemoveClassName = function (element, className) {
-      if (!element || !className) {
-        return;
-      }
-
+      if (!element || !className) return;
       element.className = (" " + (element.className || "") + " ")
         .replace(" " + className + " ", " ")
         .replace(/^\s+|\s+$/g, "");
@@ -55,13 +56,10 @@
       while (element && element !== document) {
         if (element.getAttribute) {
           var dir = element.getAttribute("dir");
-          if (dir) {
-            return dir;
-          }
+          if (dir) return dir;
         }
         element = element.parentNode;
       }
-
       return document.dir || "ltr";
     };
   }
@@ -69,9 +67,8 @@
   if (!window.WebForm_GetElementPosition) {
     window.WebForm_GetElementPosition = function (element) {
       var rect = element.getBoundingClientRect();
-      var scrollX = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-      var scrollY = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
-
+      var scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+      var scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
       return {
         x: rect.left + scrollX,
         y: rect.top + scrollY,
@@ -82,47 +79,20 @@
   }
 
   if (!window.WebForm_SetElementX) {
-    window.WebForm_SetElementX = function (element, x) {
-      if (element) {
-        element.style.left = x + "px";
-      }
-    };
+    window.WebForm_SetElementX = function (element, x) { if (element) element.style.left = x + "px"; };
   }
-
   if (!window.WebForm_SetElementY) {
-    window.WebForm_SetElementY = function (element, y) {
-      if (element) {
-        element.style.top = y + "px";
-      }
-    };
+    window.WebForm_SetElementY = function (element, y) { if (element) element.style.top = y + "px"; };
   }
-
   if (!window.WebForm_SetElementWidth) {
-    window.WebForm_SetElementWidth = function (element, width) {
-      if (element) {
-        element.style.width = width + "px";
-      }
-    };
+    window.WebForm_SetElementWidth = function (element, width) { if (element) element.style.width = width + "px"; };
   }
-
   if (!window.WebForm_SetElementHeight) {
-    window.WebForm_SetElementHeight = function (element, height) {
-      if (element) {
-        element.style.height = height + "px";
-      }
-    };
+    window.WebForm_SetElementHeight = function (element, height) { if (element) element.style.height = height + "px"; };
   }
 
   if (!window.WebForm_PostBackOptions) {
-    window.WebForm_PostBackOptions = function (
-      eventTarget,
-      eventArgument,
-      validation,
-      validationGroup,
-      actionUrl,
-      trackFocus,
-      clientSubmit
-    ) {
+    window.WebForm_PostBackOptions = function (eventTarget, eventArgument, validation, validationGroup, actionUrl, trackFocus, clientSubmit) {
       this.eventTarget = eventTarget;
       this.eventArgument = eventArgument;
       this.validation = validation;
@@ -137,11 +107,8 @@
     window.WebForm_DoPostBackWithOptions = function (options) {
       if (options && options.actionUrl) {
         var form = document.forms.form1 || document.form1;
-        if (form) {
-          form.action = options.actionUrl;
-        }
+        if (form) form.action = options.actionUrl;
       }
-
       if (!options || options.clientSubmit !== false) {
         window.__doPostBack(options ? options.eventTarget : "", options ? options.eventArgument : "");
       }
@@ -151,9 +118,7 @@
   if (!window.__doPostBack) {
     window.__doPostBack = function (eventTarget, eventArgument) {
       var theForm = document.forms.form1 || document.form1;
-      if (!theForm) {
-        return;
-      }
+      if (!theForm) return;
 
       function hidden(name) {
         var element = theForm.elements[name] || document.getElementById(name);
