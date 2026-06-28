@@ -15,7 +15,7 @@
   if (window.__sicnuExamPrint) return;
   window.__sicnuExamPrint = true;
 
-  var VERSION = "3.6.3";
+  var VERSION = "3.7.0";
   var BUTTON_RE = /打印|导出\s*PDF|下载|doprint/i;
 
   window.__sicnuExamPrintVersion = VERSION;
