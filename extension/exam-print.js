@@ -1,5 +1,5 @@
 /*
- * 川师教务 · 考试页打印接管（world:MAIN，运行在页面上下文）
+ * 川师教务 · LODOP 打印接管（world:MAIN，运行在页面上下文）
  *
  * 旧页面的“打印 / 导出PDF / 打印预览”按钮依赖本机 LODOP / CLodop 控件，现代浏览器不可用。
  * 本脚本只替换点击行为，不改原按钮的文字、尺寸、class、title、位置和外观。
@@ -11,11 +11,11 @@
 (function () {
   "use strict";
 
-  if (!/\/ExamManage\//i.test(location.pathname)) return;
+  if (!/\/(?:ExamManage|SelfPrint)\//i.test(location.pathname)) return;
   if (window.__sicnuExamPrint) return;
   window.__sicnuExamPrint = true;
 
-  var VERSION = "3.5.2";
+  var VERSION = "3.6.0";
   var BUTTON_RE = /打印|导出\s*PDF|下载|doprint/i;
 
   window.__sicnuExamPrintVersion = VERSION;
@@ -42,6 +42,8 @@
   }
 
   function isLandscape(el) {
+    var explicit = explicitPageOrientation();
+    if (explicit) return explicit === "landscape";
     var clue = (location.pathname + " " + (el.innerText || el.textContent || "")).toLowerCase();
     return /schedule|日程安排表|mutliexamarrangeresultforschedule/.test(clue) ||
       el.scrollWidth > el.scrollHeight * 1.2;
@@ -49,10 +51,13 @@
 
   function fileName(el) {
     var text = (el.innerText || el.textContent || "").replace(/\s+/g, " ");
-    var base = /准考证/.test(text) ? "川师教务-我的准考证"
+    var base = selfPrintName() ||
+      (/准考证/.test(text) ? "川师教务-我的准考证"
       : /日程安排表/.test(text) ? "川师教务-考试日程安排表"
       : /考试安排/.test(text) ? "川师教务-我的考试安排"
-      : "川师教务考试信息";
+      : /成绩/.test(text) ? "川师教务-成绩证明"
+      : /学籍|在读/.test(text) ? "川师教务-学籍证明"
+      : "川师教务打印材料");
     var d = new Date();
     var p = function (n) { return String(n).padStart(2, "0"); };
     return base + "-" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + p(d.getHours()) + p(d.getMinutes()) + ".pdf";
@@ -80,6 +85,7 @@
 
   function docHtml(el, autoPrint) {
     var orientation = isLandscape(el) ? "landscape" : "portrait";
+    var area = printArea();
     var watermark = watermarkHref(el);
     var preload = watermark
       ? '<link rel="preload" as="image" href="' + escapeAttribute(watermark) + '">'
@@ -92,14 +98,14 @@
       '<base href="' + escapeAttribute(location.href) + '">' +
       '<title>' + escapeHtml(document.title || "考试信息") + '</title>' +
       preload + styleTags() +
-      '<style>' + printCss(orientation, watermark) + '</style></head>' +
+      '<style>' + printCss(orientation, watermark, area) + '</style></head>' +
       '<body><div class="sicnu-print-sheet">' + hiddenPreload +
       '<div class="sicnu-print-content">' + cloneContent(el) + '</div></div>' +
       (autoPrint ? '<script>onload=function(){focus();print()};onafterprint=function(){close()}<\/script>' : "") +
       '</body></html>';
   }
 
-  function printCss(orientation, watermark) {
+  function printCss(orientation, watermark, area) {
     var watermarkCss = watermark
       ? ".sicnu-print-sheet:before{content:\"\";position:fixed;inset:0;background:" + cssUrl(watermark) + " center center / 72% auto no-repeat;z-index:0;pointer-events:none;}"
       : "";
@@ -107,9 +113,9 @@
       "@page{size:A4 " + orientation + ";margin:0}",
       "html,body{margin:0!important;padding:0!important;background:#fff!important;color:#000!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}",
       "body{font-family:SimSun,'Songti SC','STSong',serif}",
-      ".sicnu-print-sheet{box-sizing:border-box;position:relative;width:100%;min-height:100vh;padding:2%;background:#fff;color:#000;}",
+      ".sicnu-print-sheet{box-sizing:border-box;position:relative;width:100%;min-height:100vh;padding:0;background:#fff;color:#000;}",
       watermarkCss,
-      ".sicnu-print-content{position:relative;z-index:1;}",
+      ".sicnu-print-content{position:relative;z-index:1;box-sizing:border-box;margin:" + area.top + " 0 0 " + area.left + ";width:" + area.width + ";min-height:" + area.height + ";}",
       ".sicnu-print-content input,.sicnu-print-content button,.sicnu-print-content select,.sicnu-print-content textarea,.sicnu-print-content .btn_bg2{display:none!important}",
       ".sicnu-print-content table{page-break-inside:auto;}",
       ".sicnu-print-content tr{page-break-inside:avoid;break-inside:avoid;page-break-after:auto;}",
@@ -119,6 +125,61 @@
       ".sicnu-print-content .sicnu-img-cell:after{content:\"\";position:absolute;inset:0;border:inherit;pointer-events:none;z-index:2;}",
       ".sicnu-watermark-preload{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;left:-9999px!important;top:-9999px!important;pointer-events:none!important;}"
     ].join("");
+  }
+
+  function scriptCorpus() {
+    return Array.prototype.map.call(document.scripts, function (script) {
+      return (script.src || "") + "\n" + (script.textContent || "");
+    }).join("\n");
+  }
+
+  function explicitPageOrientation() {
+    var match = scriptCorpus().match(/SET_PRINT_PAGESIZE\s*\(\s*([012])/i);
+    if (!match) return "";
+    if (match[1] === "1") return "portrait";
+    if (match[1] === "2") return "landscape";
+    return "";
+  }
+
+  function printArea() {
+    var fallback = { top: "2%", left: "2%", width: "96%", height: "96%" };
+    var match = scriptCorpus().match(/ADD_PRINT_(?:TABLE|HTM|HTML)\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,/i);
+    if (!match) return fallback;
+    return {
+      top: cssMeasure(match[1], fallback.top),
+      left: cssMeasure(match[2], fallback.left),
+      width: cssMeasure(match[3], fallback.width),
+      height: cssMeasure(match[4], fallback.height)
+    };
+  }
+
+  function cssMeasure(value, fallback) {
+    var raw = String(value || "").trim()
+      .replace(/^['"]|['"]$/g, "")
+      .replace(/&quot;/g, "")
+      .trim();
+    if (!raw || /^auto$/i.test(raw)) return fallback;
+    if (/^-?\d+(?:\.\d+)?(?:%|px|pt|mm|cm|in|em|rem|vh|vw)$/i.test(raw)) return raw;
+    if (/^-?\d+(?:\.\d+)?$/.test(raw)) return raw + "px";
+    return fallback;
+  }
+
+  function selfPrintName() {
+    var map = {
+      "wp_zdzm.aspx": "川师教务-学籍证明普通版",
+      "wp_byszdzm.aspx": "川师教务-学籍证明毕业版",
+      "wp_xsscore.aspx": "川师教务-成绩证明",
+      "wp_jd.aspx": "川师教务-绩点算法证明",
+      "wp_yw.aspx": "川师教务-成绩证明英文版",
+      "wp_ywzd.aspx": "川师教务-学籍证明英文版",
+      "wp_ywjd.aspx": "川师教务-绩点证明英文版",
+      "wp_byzm.aspx": "川师教务-推免生证明",
+      "wp_xl.aspx": "川师教务-学历证明中英文",
+      "wp_ywbyz.aspx": "川师教务-毕业证明",
+      "wp_ywxwz.aspx": "川师教务-学位证明"
+    };
+    var name = location.pathname.split("/").pop().toLowerCase();
+    return map[name] || "";
   }
 
   function watermarkHref(el) {
@@ -133,9 +194,7 @@
   }
 
   function pageUsesLodopWatermark() {
-    return Array.prototype.some.call(document.scripts, function (script) {
-      return /ADD_PRINT_SETUP_BKIMG|WaterMark\.jpg/i.test((script.textContent || "") + " " + (script.src || ""));
-    });
+    return /ADD_PRINT_SETUP_BKIMG|WaterMark\.jpg/i.test(scriptCorpus());
   }
 
   function contentAlreadyHasWatermark(el) {
@@ -310,7 +369,7 @@
     window.getLodop = window.getCLodop = function () { return lodop; };
     window.CLODOP = lodop;
 
-    Array.prototype.forEach.call(document.querySelectorAll("input[type=button],button,a"), function (control) {
+    Array.prototype.forEach.call(document.querySelectorAll("input[type=button],input[type=submit],button,a"), function (control) {
       if (control.__sicnuPatched) return;
       var label = (control.value || "") + (control.textContent || "") + (control.getAttribute("onclick") || "") + (control.title || "");
       if (!BUTTON_RE.test(label)) return;

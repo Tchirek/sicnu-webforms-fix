@@ -21,9 +21,10 @@ const header = [
   "// @name         川师教务顶栏与考试打印修复",
   "// @namespace    local.sicnu.webforms.fix",
   `// @version      ${VERSION}`,
-  "// @description  修复四川师范大学教务系统顶栏无法切换，以及考试页面旧式 LODOP 打印按钮失效的问题。",
+  "// @description  修复四川师范大学教务系统顶栏无法切换，以及考试/打印页面旧式 LODOP 打印按钮失效的问题。",
   "// @match        http://202.115.194.60/Index.aspx*",
   "// @match        http://202.115.194.60/ExamManage/*",
+  "// @match        http://202.115.194.60/SelfPrint/*",
   "// @run-at       document-start",
   "// @grant        none",
   "// ==/UserScript==",
@@ -42,7 +43,7 @@ const out = `${header.join("\n")}
   }
   var path = location.pathname.toLowerCase();
   if (path.indexOf("/index.aspx") !== -1) inject(${JSON.stringify(webforms)});
-  if (path.indexOf("/exammanage/") !== -1) inject(${JSON.stringify(exam)});
+  if (path.indexOf("/exammanage/") !== -1 || path.indexOf("/selfprint/") !== -1) inject(${JSON.stringify(exam)});
 })();
 `;
 

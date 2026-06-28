@@ -1,8 +1,21 @@
 {
   "manifest_version": 3,
   "name": "川师教务顶栏与考试打印修复",
-  "version": "3.5.2",
-  "description": "修复四川师范大学教务系统顶栏无法切换，以及考试页面旧式 LODOP 打印、预览、导出 PDF 失效的问题。",
+  "version": "3.6.0",
+  "description": "修复四川师范大学教务系统顶栏无法切换，以及考试/打印页面旧式 LODOP 打印、预览、导出 PDF 失效的问题。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    },
+    "default_title": "川师教务修复"
+  },
   "permissions": [
     "debugger",
     "downloads"
@@ -19,13 +32,19 @@
       "world": "MAIN"
     },
     {
-      "matches": ["http://202.115.194.60/ExamManage/*"],
+      "matches": [
+        "http://202.115.194.60/ExamManage/*",
+        "http://202.115.194.60/SelfPrint/*"
+      ],
       "js": ["bridge.js"],
       "run_at": "document_start",
       "all_frames": true
     },
     {
-      "matches": ["http://202.115.194.60/ExamManage/*"],
+      "matches": [
+        "http://202.115.194.60/ExamManage/*",
+        "http://202.115.194.60/SelfPrint/*"
+      ],
       "js": ["exam-print.js"],
       "run_at": "document_start",
       "all_frames": true,
