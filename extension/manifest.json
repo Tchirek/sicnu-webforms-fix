@@ -16,13 +16,6 @@
     },
     "default_title": "川师教务修复"
   },
-  "permissions": [
-    "debugger",
-    "downloads"
-  ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "content_scripts": [
     {
       "matches": ["http://202.115.194.60/Index.aspx*"],
@@ -30,15 +23,6 @@
       "run_at": "document_start",
       "all_frames": true,
       "world": "MAIN"
-    },
-    {
-      "matches": [
-        "http://202.115.194.60/ExamManage/*",
-        "http://202.115.194.60/SelfPrint/*"
-      ],
-      "js": ["bridge.js"],
-      "run_at": "document_start",
-      "all_frames": true
     },
     {
       "matches": [

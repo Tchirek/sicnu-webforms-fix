@@ -4,9 +4,9 @@
  * 旧页面的“打印 / 导出PDF / 打印预览”按钮依赖本机 LODOP / CLodop 控件，现代浏览器不可用。
  * 本脚本只替换点击行为，不改原按钮的文字、尺寸、class、title、位置和外观。
  *
- * 打印预览：生成与导出同源的 PDF，并在浏览器 PDF 查看器中打开。
+ * 打印预览：打开同一份排版文档，便于检查。
  * 打印：在隐藏 iframe 中渲染同一份排版文档，直接调起浏览器打印对话框。
- * 导出PDF：用浏览器 PDF 引擎直接取得 PDF 文件。
+ * 导出PDF：打开打印对话框，用户选择“另存为 PDF”；打印页标题会作为建议文件名。
  */
 (function () {
   "use strict";
@@ -106,6 +106,7 @@
     var area = printArea();
     var fitPolicy = selfPrintFitPolicy();
     var layoutMode = printLayoutMode(fitPolicy);
+    var title = fileName(el).replace(/\.pdf$/i, "");
     var watermark = watermarkHref(el);
     var preload = watermark
       ? '<link rel="preload" as="image" href="' + escapeAttribute(watermark) + '">'
@@ -116,7 +117,7 @@
 
     return '<!doctype html><html><head><meta charset="utf-8">' +
       '<base href="' + escapeAttribute(location.href) + '">' +
-      '<title>' + escapeHtml(document.title || "考试信息") + '</title>' +
+      '<title>' + escapeHtml(title || document.title || "考试信息") + '</title>' +
       preload + styleTags() +
       '<style>' + printCss(orientation, watermark, area, fitPolicy) + '</style></head>' +
       '<body><div class="sicnu-print-sheet" data-fit-policy="' + fitPolicy + '" data-layout-mode="' + layoutMode + '">' + hiddenPreload +
@@ -435,62 +436,14 @@
     });
   }
 
-  function requestPdf(previewMode) {
-    var el = printable();
-    if (!el) return;
-
-    if (!document.documentElement.getAttribute("data-sicnu-bridge")) {
-      previewMode ? openWindow(el, false) : printInFrame(el);
-      return;
-    }
-
-    var toast = showToast(previewMode ? "正在生成 PDF 预览..." : "正在生成 PDF...");
-    var requestId = "sicnu-" + Date.now() + "-" + Math.random().toString(16).slice(2);
-    var finished = false;
-    var timer = setTimeout(function () {
-      cleanup();
-      previewMode ? openWindow(el, false) : printInFrame(el);
-    }, 45000);
-
-    function cleanup() {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      window.removeEventListener("sicnu-pdf-response", onResponse);
-      toast.remove();
-    }
-
-    function onResponse(e) {
-      if (!e.detail || e.detail.requestId !== requestId) return;
-      var r = e.detail.response;
-      var failed = e.detail.error || !r || !r.ok;
-      cleanup();
-      if (failed) {
-        previewMode ? openWindow(el, false) : printInFrame(el);
-      }
-    }
-
-    window.addEventListener("sicnu-pdf-response", onResponse);
-    window.dispatchEvent(new CustomEvent("sicnu-pdf-request", {
-      detail: {
-        requestId: requestId,
-        payload: {
-          html: docHtml(el, false),
-          filename: fileName(el),
-          orientation: isLandscape(el) ? "landscape" : "portrait",
-          origin: location.origin,
-          preview: !!previewMode
-        }
-      }
-    }));
-  }
-
   function preview() {
-    requestPdf(true);
+    var el = printable();
+    if (el) openWindow(el, false);
   }
 
   function downloadPdf() {
-    requestPdf(false);
+    var el = printable();
+    if (el) openWindow(el, true);
   }
 
   function printPage() {
@@ -508,12 +461,15 @@
   function printInFrame(el) {
     var iframe = document.createElement("iframe");
     var cleanupTimer;
+    var oldTitle = document.title;
 
     function cleanup() {
       clearTimeout(cleanupTimer);
+      document.title = oldTitle;
       try { iframe.remove(); } catch (e) {}
     }
 
+    document.title = fileName(el).replace(/\.pdf$/i, "") || oldTitle;
     iframe.setAttribute("aria-hidden", "true");
     iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none";
     document.body.appendChild(iframe);
@@ -599,15 +555,6 @@
       control.__sicnuPatched = true;
       control.addEventListener("click", intercept, true);
     });
-  }
-
-  function showToast(message) {
-    var t = document.createElement("div");
-    t.textContent = message;
-    t.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;padding:8px 12px;" +
-      "background:rgba(0,0,0,.78);color:#fff;font:13px system-ui,-apple-system,'Segoe UI',sans-serif;border-radius:4px";
-    document.body.appendChild(t);
-    return t;
   }
 
   function cssUrl(value) {
