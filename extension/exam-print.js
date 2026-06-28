@@ -15,8 +15,8 @@
   if (window.__sicnuExamPrint) return;
   window.__sicnuExamPrint = true;
 
-  var VERSION = "3.7.0";
-  var BUTTON_RE = /打印|导出\s*PDF|下载|doprint/i;
+  var VERSION = "3.7.1";
+  var BUTTON_RE = /打印|(?:导出|下载)\s*PDF|doprint/i;
 
   window.__sicnuExamPrintVersion = VERSION;
   try { document.documentElement.setAttribute("data-sicnu-print", VERSION); } catch (e) {}

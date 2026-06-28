@@ -3,6 +3,10 @@
  * 扩展里的 webforms-patch.js / exam-print.js 是唯一真源；用户脚本由本脚本生成，
  * 不再手工抄写，从根本上杜绝两份代码漂移。
  *
+ * 版本号也只有一个真源：以 manifest.json 为准，构建时同步写回 exam-print.js。
+ * 读取时统一把 CRLF 规整成 LF，使产物与平台、工作区行尾设置无关——构建可复现，
+ * `node build.mjs` 之后 `git diff` 必为空。
+ *
  * 用法： node build.mjs
  */
 import { readFileSync, writeFileSync } from "node:fs";
@@ -10,11 +14,17 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const read = (p) => readFileSync(join(root, p), "utf8");
+const read = (p) => readFileSync(join(root, p), "utf8").replace(/\r\n/g, "\n");
+const write = (p, text) => writeFileSync(join(root, p), text);
 
 const VERSION = JSON.parse(read("extension/manifest.json")).version;
+
+// 版本单一真源：把 exam-print.js 里的 VERSION 常量对齐到 manifest，并写回（LF）。
+const examPath = "extension/exam-print.js";
+const exam = read(examPath).replace(/(var VERSION = ")[^"]*(";)/, `$1${VERSION}$2`);
+write(examPath, exam);
+
 const webforms = read("extension/webforms-patch.js");
-const exam = read("extension/exam-print.js");
 
 const header = [
   "// ==UserScript==",
@@ -47,6 +57,6 @@ const out = `${header.join("\n")}
 })();
 `;
 
-const target = join(root, "userscript/sicnu-webforms-fix.user.js");
-writeFileSync(target, out);
-console.log(`userscript 已生成 v${VERSION}：${target} (${out.length} 字符)`);
+const target = "userscript/sicnu-webforms-fix.user.js";
+write(target, out);
+console.log(`userscript 已生成 v${VERSION}：${join(root, target)} (${out.length} 字符)`);
