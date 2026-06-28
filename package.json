@@ -1,0 +1,39 @@
+{
+  "name": "sicnu-webforms-fix",
+  "version": "3.7.1",
+  "description": "Browser extension and userscript for fixing SICNU academic affairs WebForms navigation and legacy print buttons.",
+  "license": "MIT",
+  "author": "Tchirek",
+  "homepage": "https://github.com/Tchirek/sicnu-webforms-fix#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tchirek/sicnu-webforms-fix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Tchirek/sicnu-webforms-fix/issues"
+  },
+  "keywords": [
+    "sicnu",
+    "browser-extension",
+    "userscript",
+    "webforms",
+    "lodop",
+    "print"
+  ],
+  "files": [
+    "build.mjs",
+    "dist/",
+    "extension/",
+    "userscript/",
+    "README.md",
+    "PRIVACY.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
