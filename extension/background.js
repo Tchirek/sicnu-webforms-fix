@@ -18,6 +18,8 @@
  * （A4＋方向），并等待字体、照片、水印图片稳定后再落 PDF。
  */
 
+var ALLOWED_ORIGIN = "http://202.115.194.60";
+var PRINT_PATH_RE = /\/(?:ExamManage|SelfPrint)\//i;
 var SENTINEL = "/__sicnu_print__"; // 占位导航路径；不在任何 content_scripts 匹配范围内，故不会被注入
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
@@ -31,6 +33,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 async function exportPdf(payload, sender) {
   if (!chrome.debugger) throw new Error("当前浏览器不支持 debugger 接口。");
   if (!payload || !payload.html || !payload.origin) throw new Error("导出请求缺少必要字段。");
+  var origin = verifiedOrigin(payload, sender);
 
   var render = await createHiddenRenderTarget("about:blank", sender).catch(function (hiddenError) {
     var hiddenReason = hiddenError && hiddenError.message ? hiddenError.message : String(hiddenError);
@@ -40,7 +43,7 @@ async function exportPdf(payload, sender) {
     });
   });
   var debuggee = render.debuggee;
-  var renderUrl = payload.origin + SENTINEL + "?r=" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+  var renderUrl = origin + SENTINEL + "?r=" + Date.now().toString(36) + Math.random().toString(36).slice(2);
   var htmlBase64 = toBase64Utf8(payload.html);
 
   // 把占位 URL 的导航响应替换成打印文档；其余子资源（样式表/图片/水印）一律放行——
@@ -93,6 +96,23 @@ async function exportPdf(payload, sender) {
     try { await detach(debuggee); } catch (_) {}
     try { await render.close(); } catch (_) {}
   }
+}
+
+function verifiedOrigin(payload, sender) {
+  var rawUrl = sender && (sender.url || (sender.tab && sender.tab.url)) || "";
+  var url;
+  try {
+    url = new URL(rawUrl);
+  } catch (_) {
+    throw new Error("导出请求来源无效。");
+  }
+  if (url.origin !== ALLOWED_ORIGIN || !PRINT_PATH_RE.test(url.pathname)) {
+    throw new Error("导出请求来源不在允许范围。");
+  }
+  if (payload.origin !== url.origin) {
+    throw new Error("导出请求来源不匹配。");
+  }
+  return url.origin;
 }
 
 function onceEvent(debuggee, method) {
